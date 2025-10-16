@@ -11,7 +11,9 @@ import argparse
 import logging
 import os
 import json
+import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from time import sleep
 from typing import Any
 
@@ -315,12 +317,28 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable verbose logging for debugging.",
     )
+    parser.add_argument(
+        "--log-dir",
+        default=os.getenv("EVAL_LOG_DIR"),
+        help="Directory for verbose logs and eval artifacts. Defaults to 'logs/evals' when --verbose is set and no directory is provided.",
+    )
     return parser.parse_args()
 
 
-def _init_logging(verbose: bool) -> None:
+def _init_logging(verbose: bool, log_file: Path | None) -> None:
     log_level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(level=log_level, format="%(asctime)s - %(levelname)s - %(message)s")
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if log_file is not None:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler.setLevel(log_level)
+        handlers.append(file_handler)
+
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=handlers,
+    )
 
 
 def _get_window_start(minutes_back: int) -> datetime:
@@ -341,7 +359,20 @@ def main() -> None:
     if os.getenv("EVAL_EXPLAIN", "").lower() in {"1", "true", "yes"}:
         args.explain = True
 
-    _init_logging(args.verbose)
+    log_dir: Path | None = None
+    if args.log_dir:
+        log_dir = Path(args.log_dir).expanduser()
+    elif args.verbose:
+        log_dir = Path("logs/evals")
+
+    log_file: Path | None = None
+    if log_dir is not None:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "dify_rag_evals.log"
+
+    args.log_dir = log_dir
+
+    _init_logging(args.verbose, log_file)
 
     if args.loop:
         LOGGER.info(
@@ -366,6 +397,32 @@ def _run_once(args: argparse.Namespace) -> None:
 
     client = px.Client(warn_if_server_not_running=False)
     window_start = _get_window_start(args.since_minutes)
+
+    run_artifact_dir: Path | None = None
+    run_started_at = datetime.now(timezone.utc)
+    run_timestamp = run_started_at.strftime("%Y%m%d_%H%M%S")
+    if args.log_dir is not None:
+        run_artifact_dir = Path(args.log_dir) / run_timestamp
+        run_artifact_dir.mkdir(parents=True, exist_ok=True)
+        LOGGER.info("Verbose artifacts directory: %s", run_artifact_dir)
+        metadata_path = run_artifact_dir / "metadata.json"
+        with metadata_path.open("w", encoding="utf-8") as metadata_file:
+            json.dump(
+                {
+                    "project": args.project,
+                    "since_minutes": args.since_minutes,
+                    "model_name": args.model_name,
+                    "skip_qa": args.skip_qa,
+                    "explain": args.explain,
+                    "dry_run": args.dry_run,
+                    "loop": args.loop,
+                    "window_start_utc": window_start.isoformat(),
+                    "artifact_dir": str(run_artifact_dir),
+                    "run_timestamp_utc": run_started_at.isoformat(),
+                },
+                metadata_file,
+                indent=2,
+            )
 
     max_attempts = max(int(os.getenv("EVAL_CONNECT_RETRIES", "5")), 1)
     retry_delay = max(int(os.getenv("EVAL_CONNECT_RETRY_SECONDS", "10")), 1)
@@ -430,6 +487,8 @@ def _run_once(args: argparse.Namespace) -> None:
             evaluators=evaluators,
             provide_explanation=args.explain,
         )[0]
+        if run_artifact_dir is not None:
+            _write_eval_artifacts(run_artifact_dir, eval_name, dataframe, results)
         if args.dry_run:
             LOGGER.info("Dry run enabled, skipping log for %s", eval_name)
             continue
@@ -442,6 +501,26 @@ def _run_once(args: argparse.Namespace) -> None:
 
     client.log_evaluations(*logged_evals)
     LOGGER.info("Logged %d evaluations back to Phoenix project '%s'.", len(logged_evals), args.project)
+
+
+def _write_eval_artifacts(
+    run_artifact_dir: Path,
+    eval_name: str,
+    input_dataframe: pd.DataFrame,
+    results_dataframe: pd.DataFrame,
+) -> None:
+    """Persist evaluation inputs and outputs for auditing when verbose logging is enabled."""
+
+    def _sanitize(name: str) -> str:
+        safe = re.sub(r"[^a-zA-Z0-9]+", "_", name).strip("_")
+        return safe.lower() or "eval"
+
+    prefix = _sanitize(eval_name)
+    input_path = run_artifact_dir / f"{prefix}_input.csv"
+    results_path = run_artifact_dir / f"{prefix}_results.csv"
+    input_dataframe.to_csv(input_path)
+    results_dataframe.to_csv(results_path)
+    LOGGER.debug("Persisted %s artifacts to %s", eval_name, run_artifact_dir)
 
 
 if __name__ == "__main__":

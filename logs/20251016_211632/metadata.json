@@ -1,0 +1,12 @@
+{
+  "project": "default",
+  "since_minutes": 6000,
+  "model_name": "gpt-4o",
+  "skip_qa": false,
+  "explain": true,
+  "dry_run": false,
+  "loop": false,
+  "window_start_utc": "2025-10-12T17:16:32.797480+00:00",
+  "artifact_dir": "logs/evals/20251016_211632",
+  "run_timestamp_utc": "2025-10-16T21:16:32.797488+00:00"
+}
