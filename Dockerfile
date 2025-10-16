@@ -63,7 +63,8 @@ RUN pip install --target ./env ".[container, pg]"
 FROM ${BASE_IMAGE}
 WORKDIR /phoenix
 COPY --from=backend-builder /phoenix/env/ ./env
-ENV PYTHONPATH="/phoenix/env:$PYTHONPATH"
+COPY ./scripts /phoenix/scripts
+ENV PYTHONPATH="/phoenix/env:/phoenix:$PYTHONPATH"
 ENV PYTHONUNBUFFERED=1
 # Expose the Phoenix port.
 EXPOSE 6006
