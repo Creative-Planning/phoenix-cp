@@ -49,6 +49,29 @@ services:
       - -m
       - scripts.evals.run_dify_rag_evals
       - --loop
+  experiment-runner:
+    build:
+      dockerfile: ./Dockerfile
+      context: .
+    depends_on:
+      phoenix:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - DIFY_BASE_URL=${DIFY_BASE_URL}
+      - DIFY_API_KEY=${DIFY_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PHOENIX_BASE_URL=http://phoenix:6006
+      - EVAL_MODEL=${EVAL_MODEL}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    profiles:
+      - manual
+    command:
+      - -m
+      - scripts.experiments.run_dify_experiment
+      - --help
   db:
     image: postgres:16
     restart: always
