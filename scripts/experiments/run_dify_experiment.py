@@ -28,12 +28,7 @@ from typing import Any
 
 import httpx
 from phoenix.client import Client
-from phoenix.evals import (
-    HallucinationEvaluator,
-    OpenAIModel,
-    QAEvaluator,
-    RelevanceEvaluator,
-)
+from phoenix.evals import OpenAIModel
 from phoenix.experiments.evaluators import create_evaluator
 from phoenix.otel import register
 
@@ -149,11 +144,13 @@ class DifyTaskRunner:
                 - error: Any error message if the call failed
         """
         # Extract the query/question from input
+        # Support various common column names
         if isinstance(input, dict):
             query = (
                 input.get("question")
                 or input.get("query")
                 or input.get("input")
+                or input.get("sys.query")  # Phoenix trace exports
                 or input.get("text")
                 or str(input)
             )
@@ -269,21 +266,184 @@ def create_custom_evaluators() -> list:
     return [has_answer, no_error, has_retrieval, retrieval_count]
 
 
-def setup_llm_evaluators(model_name: str) -> list:
-    """Set up Phoenix LLM evaluators for RAG quality assessment."""
-    model = OpenAIModel(model_name=model_name)
+def setup_llm_evaluators(model_name: str, skip_qa: bool = False) -> list:
+    """
+    Set up custom LLM evaluators that wrap Phoenix legacy evaluators.
 
+    These evaluators extract answer/retrieved_docs from the task output dict
+    and use the legacy evaluators for the actual LLM-as-judge evaluation.
+    """
+    from phoenix.evals import (
+        HallucinationEvaluator as LegacyHallucinationEvaluator,
+        RelevanceEvaluator as LegacyRelevanceEvaluator,
+        QAEvaluator as LegacyQAEvaluator,
+    )
+
+    model = OpenAIModel(model_name=model_name)
     evaluators = []
 
-    # Hallucination: checks if the output contradicts the retrieved documents
-    hallucination_eval = HallucinationEvaluator(model)
-    evaluators.append(hallucination_eval)
+    # Hallucination evaluator: checks if answer contradicts retrieved documents
+    legacy_hallucination = LegacyHallucinationEvaluator(model)
 
-    # Relevance: checks if retrieved documents are relevant to the query
-    relevance_eval = RelevanceEvaluator(model)
-    evaluators.append(relevance_eval)
+    @create_evaluator(name="hallucination", kind="LLM")
+    def hallucination_evaluator(output: dict, input: dict) -> tuple[float, str]:
+        """
+        Evaluate if the DIFY answer hallucinates given the retrieved documents.
 
-    LOGGER.info("Initialized LLM evaluators with model: %s", model_name)
+        Args:
+            output: Task output dict with keys: output (answer), reference (docs), metadata
+            input: Dataset input dict with the question
+
+        Returns:
+            (score, explanation) tuple
+        """
+        if not isinstance(output, dict):
+            return (0.0, "Error: task output is not a dict")
+
+        answer = output.get("output", "")
+        retrieved_docs = output.get("reference", "")
+        # Support various common column names for questions
+        question = (
+            input.get("question")
+            or input.get("query")
+            or input.get("input")
+            or input.get("sys.query")  # Phoenix trace exports use this
+            or ""
+        )
+
+        if not answer:
+            return (0.0, "No answer provided")
+        if not retrieved_docs:
+            return (0.0, "No retrieved documents to check against")
+
+        # Build a record compatible with legacy evaluator
+        record = {
+            "input": question,
+            "output": answer,
+            "reference": retrieved_docs,
+        }
+
+        # Call legacy evaluator
+        label, score, explanation = legacy_hallucination.evaluate(record, provide_explanation=True)
+
+        return (score or 0.0, explanation or f"Label: {label}")
+
+    evaluators.append(hallucination_evaluator)
+
+    # Relevance evaluator: checks if retrieved documents are relevant to the query
+    legacy_relevance = LegacyRelevanceEvaluator(model)
+
+    @create_evaluator(name="relevance", kind="LLM")
+    def relevance_evaluator(output: dict, input: dict) -> tuple[float, str]:
+        """
+        Evaluate if the retrieved documents are relevant to the question.
+
+        Args:
+            output: Task output dict with retrieved documents
+            input: Dataset input dict with the question
+
+        Returns:
+            (score, explanation) tuple
+        """
+        if not isinstance(output, dict):
+            return (0.0, "Error: task output is not a dict")
+
+        retrieved_docs = output.get("reference", "")
+        # Support various common column names for questions
+        question = (
+            input.get("question")
+            or input.get("query")
+            or input.get("input")
+            or input.get("sys.query")  # Phoenix trace exports use this
+            or ""
+        )
+
+        if not retrieved_docs:
+            return (0.0, "No retrieved documents")
+        if not question:
+            return (0.0, "No question provided")
+
+        # Build a record compatible with legacy evaluator
+        record = {
+            "input": question,
+            "reference": retrieved_docs,
+        }
+
+        # Call legacy evaluator
+        label, score, explanation = legacy_relevance.evaluate(record, provide_explanation=True)
+
+        return (score or 0.0, explanation or f"Label: {label}")
+
+    evaluators.append(relevance_evaluator)
+
+    # Q&A evaluator: checks if answer is correct given expected answer
+    # Only works if dataset has "expected" output field
+    if not skip_qa:
+        legacy_qa = LegacyQAEvaluator(model)
+
+        @create_evaluator(name="qa_correctness", kind="LLM")
+        def qa_evaluator(output: dict, input: dict, expected: dict | None = None) -> tuple[float, str]:
+            """
+            Evaluate if the DIFY answer is correct compared to expected answer.
+
+            Args:
+                output: Task output dict with the answer
+                input: Dataset input dict with the question
+                expected: Dataset output dict with expected answer (if present)
+
+            Returns:
+                (score, explanation) tuple
+            """
+            if not isinstance(output, dict):
+                return (0.0, "Error: task output is not a dict")
+
+            answer = output.get("output", "")
+            # Support various common column names for questions
+            question = (
+                input.get("question")
+                or input.get("query")
+                or input.get("input")
+                or input.get("sys.query")  # Phoenix trace exports use this
+                or ""
+            )
+
+            if not answer:
+                return (0.0, "No answer provided")
+            if not question:
+                return (0.0, "No question provided")
+
+            # Check if we have expected answer
+            if not expected or not isinstance(expected, dict):
+                return (0.0, "No expected answer in dataset - cannot evaluate correctness")
+
+            # Support various common column names for expected answers
+            expected_answer = (
+                expected.get("expected_answer")
+                or expected.get("answer")
+                or expected.get("expected")
+                or expected.get("output")
+                or expected.get("reference")  # GBA FAQ uses this
+                or ""
+            )
+            if not expected_answer:
+                return (0.0, "Expected answer field is empty")
+
+            # Build a record compatible with legacy evaluator
+            record = {
+                "input": question,
+                "output": answer,
+                "reference": expected_answer,  # For Q&A, reference is the gold answer
+            }
+
+            # Call legacy evaluator
+            label, score, explanation = legacy_qa.evaluate(record, provide_explanation=True)
+
+            return (score or 0.0, explanation or f"Label: {label}")
+
+        evaluators.append(qa_evaluator)
+        LOGGER.info("Q&A correctness evaluator included (requires expected answer in dataset)")
+
+    LOGGER.info("Initialized %d LLM evaluators with model: %s", len(evaluators), model_name)
 
     return evaluators
 
@@ -313,7 +473,8 @@ def main() -> None:
     # Load the dataset
     if args.dataset_id:
         LOGGER.info("Loading dataset by ID: %s", args.dataset_id)
-        dataset = phoenix_client.datasets.get_dataset(dataset=args.dataset_id)
+        dataset_id = args.dataset_id
+        dataset_name = args.dataset_id  # Will be updated when we fetch metadata
     else:
         LOGGER.info("Loading dataset by name: %s", args.dataset_name)
         # List datasets and find by name
@@ -334,11 +495,30 @@ def main() -> None:
                 args.dataset_name,
             )
 
-        # Get the full dataset object using the ID
-        dataset = phoenix_client.datasets.get_dataset(dataset=matching[0]["id"])
+        dataset_id = matching[0]["id"]
+        dataset_name = matching[0]["name"]
 
-    LOGGER.info("Loaded dataset: %s (ID: %s)", dataset.name, dataset.id)
-    LOGGER.info("Dataset has %d examples", len(dataset))
+    LOGGER.info("Using dataset: %s (ID: %s)", dataset_name, dataset_id)
+
+    # Workaround: Manually construct Dataset object because get_dataset() returns 500 error
+    # The Phoenix server has a bug where example_count is None, causing validation to fail
+    # We'll fetch examples directly and use the dataset_info from list()
+    LOGGER.debug("Fetching dataset examples...")
+    examples_response = phoenix_client._client.get(
+        f"v1/datasets/{dataset_id}/examples",
+        headers={"accept": "application/json"},
+    )
+    examples_response.raise_for_status()
+    examples_data = examples_response.json()["data"]
+
+    # Import Dataset class to construct it manually
+    from phoenix.client.resources.datasets import Dataset
+
+    # Use dataset metadata from list() response (which doesn't have example_count)
+    dataset_info = matching[0] if not args.dataset_id else {"id": dataset_id, "name": dataset_name}
+    dataset = Dataset(dataset_info, examples_data)
+
+    LOGGER.info("Loaded dataset with %d examples", len(dataset))
 
     # Create the task runner
     task = DifyTaskRunner(
@@ -350,14 +530,7 @@ def main() -> None:
 
     # Set up evaluators
     custom_evaluators = create_custom_evaluators()
-    llm_evaluators = setup_llm_evaluators(args.eval_model)
-
-    # Note: Q&A evaluator needs expected answers in the dataset, which may not be present
-    if not args.skip_qa:
-        LOGGER.info("Q&A evaluator will be included (requires 'expected' or 'answer' in dataset)")
-        model = OpenAIModel(model_name=args.eval_model)
-        qa_eval = QAEvaluator(model)
-        llm_evaluators.append(qa_eval)
+    llm_evaluators = setup_llm_evaluators(args.eval_model, skip_qa=args.skip_qa)
 
     all_evaluators = custom_evaluators + llm_evaluators
 
@@ -395,7 +568,7 @@ def main() -> None:
             base_url = base_url[:-3]
 
         experiment_url = (
-            f"{base_url}/datasets/{dataset.id}/compare"
+            f"{base_url}/datasets/{dataset_id}/compare"
             f"?experimentId={experiment.id}"
         )
         LOGGER.info("View results: %s", experiment_url)
