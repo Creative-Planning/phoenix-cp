@@ -1,5 +1,7 @@
 # Dify RAG Evaluation & Deployment Playbook
 
+> Audience: Platform/DevOps engineers responsible for running Phoenix + Dify infrastructure. For analyst-facing experiment instructions, point stakeholders to `docs/creative-planning/how-to-guide.md`.
+
 This guide documents the pieces we’ve added on top of upstream Phoenix so the team can run evaluations and deploy the stack on EC2 in a consistent way.
 
 ## 1. Environment Configuration
@@ -39,7 +41,7 @@ Script: `scripts/experiments/run_experiment_docker.sh`.
 
 Purpose: Trigger an on-demand experiment run from your shell, either locally or on an EC2 host.
 
-What it does:
+What it does (operators make this available; analysts follow the user how-to guide for day-to-day usage):
 
 1. Ensures the Phoenix service is up (`docker compose up -d phoenix` if necessary).
 2. Executes `docker compose run --rm experiment-runner` with the arguments you pass.
@@ -55,7 +57,7 @@ Common flags:
 - `--skip-qa`, `--explain`: opt-in/opt-out of extra evaluators.
 - `--host-network`: needed if Dify runs on `localhost` outside Docker.
 
-Remote usage: the deploy script copies this helper to `/opt/phoenix/scripts/experiments/run_experiment_docker.sh` on the EC2 instance. SSH in, ensure you re-login so you’re in the `docker` group, then invoke the script just like you would locally.
+Remote usage: the deploy script copies this helper to `/opt/phoenix/scripts/experiments/run_experiment_docker.sh` on the EC2 instance. SSH in, ensure you re-login so you’re in the `docker` group, then invoke the script just like you would locally (or provide these instructions to analysts once the host is ready).
 
 ## 4. EC2 Deployment Workflow
 
