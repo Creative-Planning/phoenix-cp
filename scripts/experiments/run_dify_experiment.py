@@ -556,22 +556,34 @@ def main() -> None:
         experiment = phoenix_client.experiments.run_experiment(**experiment_params)
 
         LOGGER.info("✓ Experiment completed successfully!")
-        LOGGER.info("Experiment ID: %s", experiment.id)
-        LOGGER.info("Experiment name: %s", experiment.name)
 
-        # Print experiment URL
-        base_url = phoenix_url.rstrip('/')
-        # Remove /graphql or /v1 suffix if present
-        if base_url.endswith('/graphql'):
-            base_url = base_url[:-8]
-        elif base_url.endswith('/v1'):
-            base_url = base_url[:-3]
+        # Handle both object-style and dict-style responses from the Phoenix client
+        experiment_id = getattr(experiment, "id", None)
+        experiment_name = getattr(experiment, "name", None)
 
-        experiment_url = (
-            f"{base_url}/datasets/{dataset_id}/compare"
-            f"?experimentId={experiment.id}"
-        )
-        LOGGER.info("View results: %s", experiment_url)
+        if experiment_id is None and isinstance(experiment, dict):
+            experiment_id = experiment.get("id") or experiment.get("experimentId")
+            experiment_name = experiment_name or experiment.get("name")
+
+        LOGGER.info("Experiment ID: %s", experiment_id or "<unknown>")
+        LOGGER.info("Experiment name: %s", experiment_name or "<unnamed>")
+
+        # Print experiment URL (only if we have an ID)
+        if experiment_id:
+            base_url = phoenix_url.rstrip('/')
+            # Remove /graphql or /v1 suffix if present
+            if base_url.endswith('/graphql'):
+                base_url = base_url[:-8]
+            elif base_url.endswith('/v1'):
+                base_url = base_url[:-3]
+
+            experiment_url = (
+                f"{base_url}/datasets/{dataset_id}/compare"
+                f"?experimentId={experiment_id}"
+            )
+            LOGGER.info("View results: %s", experiment_url)
+        else:
+            LOGGER.warning("Experiment ID missing from response; skipping result URL generation")
 
         LOGGER.info(
             "\nYou can now view the experiment results in the Phoenix UI."

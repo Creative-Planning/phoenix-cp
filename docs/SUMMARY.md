@@ -154,3 +154,7 @@
 * [Contribute to Phoenix](resources/contribute-to-phoenix.md)
 * [Github](https://github.com/Arize-ai/phoenix)
 * [OpenInference](https://github.com/Arize-ai/openinference)
+
+## Creative Planning
+
+* [Dify RAG Evaluation & Deployment Playbook](creative-planning/dify-rag-deployment.md)
