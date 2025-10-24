@@ -269,6 +269,7 @@ input ChatCompletionOverDatasetInput {
   repetitions: Int!
   datasetId: ID!
   datasetVersionId: ID = null
+  splitIds: [ID!] = null
   experimentName: String = null
   experimentDescription: String = null
   experimentMetadata: JSON = {}
@@ -700,8 +701,9 @@ type DatasetExperimentAnnotationSummary {
 
 """A filter for datasets"""
 input DatasetFilter {
-  col: DatasetFilterColumn!
-  value: String!
+  col: DatasetFilterColumn = null
+  value: String = null
+  filterLabels: [String!]
 }
 
 enum DatasetFilterColumn {
@@ -1252,6 +1254,7 @@ type Experiment implements Node {
   lastUpdatedAt: DateTime
   costSummary: SpanCostSummary!
   costDetailSummaryEntries: [SpanCostDetailSummaryEntry!]!
+  datasetSplits: DatasetSplitConnection!
 }
 
 type ExperimentAnnotationSummary {
@@ -2388,7 +2391,7 @@ type Query {
   model: InferenceModel!
   node(id: ID!): Node!
   viewer: User
-  prompts(first: Int = 50, last: Int, after: String, before: String, filter: PromptFilter): PromptConnection!
+  prompts(first: Int = 50, last: Int, after: String, before: String, filter: PromptFilter, labelIds: [ID!]): PromptConnection!
   promptLabels(first: Int = 50, last: Int, after: String, before: String): PromptLabelConnection!
   datasetLabels(first: Int = 50, last: Int, after: String, before: String): DatasetLabelConnection!
   datasetSplits(first: Int = 50, last: Int, after: String, before: String): DatasetSplitConnection!
