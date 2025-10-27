@@ -8,6 +8,8 @@ This guide documents the pieces we’ve added on top of upstream Phoenix so the 
 
 All local Docker Compose runs and EC2 deployments share the same environment file schema. Start by copying `deploy/env/phoenix.env.example` to a secrets file (e.g. `.env` for local usage and `deploy/phoenix.ec2.env` for production) and fill in every placeholder.
 
+> The deploy script now enforces `chmod 600` on the remote `.env` so only the deploying user can read it. Keep the file permissions equally strict on your laptop (or store the values in a secrets vault) to prevent accidental disclosure.
+
 Key sections in the env template:
 
 - **Phoenix auth:** enable login (`PHOENIX_ENABLE_AUTH=true`), set long `PHOENIX_SECRET`, `PHOENIX_ADMIN_SECRET`, and rotate the default admin password.
@@ -65,9 +67,11 @@ Script: `scripts/deploy/deploy_phoenix_ec2.sh`.
 
 ### 4.1 Prerequisites
 
-- AWS CLI configured with permission to create/use ECR and SSH access to the EC2 host.
-- EC2 instance running a modern Debian/Ubuntu/RHEL/Amazon Linux derivative.
-- The secrets file populated (see Section 1).
+- **Local machine:** AWS CLI configured with permission to describe/create ECR repos, push images, and start SSM/EC2 actions; Docker CLI able to build the Phoenix image; SSH key with access to the target instance.
+- **EC2 baseline:** Launch Ubuntu 22.04 LTS or Amazon Linux 2023 (recommend `t3.large` or `t3a.large`, 2 vCPU / 8 GB RAM minimum) with a 40–60 GB gp3 volume. Update packages (`sudo apt-get update && sudo apt-get upgrade -y` or equivalent) and ensure the user you deploy with has passwordless sudo. The script can install Docker/Compose, but outbound HTTPS (ports 443/80) must be allowed so it can download packages.
+- **IAM:** Attach an instance profile that can pull from the Phoenix ECR repo and, if you later migrate secrets to AWS Secrets Manager or Parameter Store, grant `secretsmanager:GetSecretValue` / `ssm:GetParameter`.
+- **Networking:** Create or reuse a security group that allows inbound 22/80/443/6006/4317 from your office/VPC ranges only. Allow all outbound traffic so the containers can reach OpenAI, Bedrock, or Dify endpoints. Optionally allocate an Elastic IP so DNS remains stable.
+- **Secrets:** Populate the env file from Section 1. For production, plan to store the raw values in your secret manager and generate the `.env` during deployment; the simple approach keeps the file locally but the remote copy ends up at `/opt/phoenix/.env` with mode `600`.
 
 ### 4.2 Running the Deploy Script
 
@@ -94,15 +98,19 @@ Optional flags include `--image-tag` (override tag), `--ecr-repo` (default `phoe
 
 ### 4.4 Post-Deploy Steps
 
-- Reconnect to the EC2 machine (new SSH session required for Docker group membership).
+- Reconnect to the EC2 machine (new SSH session required for Docker group membership). Confirm the `.env` permissions with `ls -l /opt/phoenix/.env` (should read `-rw-------`).
 - Visit `https://<public-ip>` or `https://<ec2-dns-name>`, accept the self-signed certificate warning in your browser, then log in with the seeded admin credentials and change the password immediately.
-- Mint a system API key for production ingestion.
+- Mint a system API key for production ingestion and store it securely.
 - Adjust security groups to allow inbound traffic:
   - Port 443 (HTTPS) - for web UI access
   - Port 80 (HTTP) - automatically redirects to HTTPS
   - Port 6006 (HTTP) - for Phoenix API and trace ingestion (DIFY uses this)
   - Port 4317 (gRPC) - for OTLP trace ingestion (optional, DIFY uses HTTP)
   - Port 22 (SSH) - for deployment and management
+- Optional hardening:
+  - Scope inbound traffic to trusted CIDRs or front the host with an ALB + ACM certificate.
+  - Enable automatic security updates (Ubuntu `unattended-upgrades`, Amazon Linux `dnf-automatic`).
+  - Configure CloudWatch/CloudTrail or another log sink for Docker and system logs.
 
 **Note on HTTPS:** The deployment uses a self-signed SSL certificate for UI access. Browsers will show a security warning on first access. Click "Advanced" and "Proceed" to accept the certificate. The certificate is valid for 365 days and persists across redeployments.
 
@@ -157,6 +165,7 @@ DIFY uses the HTTP OTLP exporter and will send traces to `http://<ec2-ip>:6006/v
 
 - Redeploy with the same command whenever the code changes—provide `--image-tag` to roll back.
 - Rotate secrets by editing the env file locally and re-running the deploy script (it re-syncs `.env`).
+- For longer-lived environments, migrate the env variables to AWS Secrets Manager or SSM Parameter Store and modify the deploy script or a systemd unit to render `.env` from those sources during boot.
 - Experiment execution and dataset uploads can be initiated on the EC2 box via the copied script or via Phoenix APIs using the shared env file.
 
 ## 5. Keeping Docs Organized

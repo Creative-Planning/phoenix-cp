@@ -91,3 +91,4 @@ helm/charts/*.tgz
 
 CLAUDE.md
 AGENTS.md
+deploy/env/phoenix.env

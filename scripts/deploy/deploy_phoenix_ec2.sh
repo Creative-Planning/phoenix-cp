@@ -324,6 +324,7 @@ echo ">>> Copying docker-compose.yml, nginx.conf, and env file to remote host"
 scp -P "$EC2_SSH_PORT" "$tmp_compose" "${EC2_SSH_HOST}:${REMOTE_DIR}/docker-compose.yml"
 scp -P "$EC2_SSH_PORT" "$tmp_nginx_conf" "${EC2_SSH_HOST}:${REMOTE_DIR}/nginx.conf"
 scp -P "$EC2_SSH_PORT" "$ENV_FILE" "${EC2_SSH_HOST}:${REMOTE_DIR}/.env"
+ssh -p "$EC2_SSH_PORT" "$EC2_SSH_HOST" "chmod 600 '${REMOTE_DIR}/.env'"
 
 echo ">>> Syncing experiment helper scripts"
 ssh -p "$EC2_SSH_PORT" "$EC2_SSH_HOST" "mkdir -p '${REMOTE_DIR}/scripts/experiments'"
