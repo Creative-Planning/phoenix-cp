@@ -9,6 +9,8 @@ This guide documents the pieces we’ve added on top of upstream Phoenix so the 
 All local Docker Compose runs and EC2 deployments share the same environment file schema. Start by copying `deploy/env/phoenix.env.example` to a secrets file (e.g. `.env` for local usage and `deploy/phoenix.ec2.env` for production) and fill in every placeholder.
 
 > The deploy script now enforces `chmod 600` on the remote `.env` so only the deploying user can read it. Keep the file permissions equally strict on your laptop (or store the values in a secrets vault) to prevent accidental disclosure.
+>
+> Leave `PHOENIX_API_KEY` set to `replace-with-phoenix-api-key` (or blank) if you want the deployment script to mint a fresh system API key automatically. The script will log in with the seeded admin account, create the key, and replace the placeholder in `/opt/phoenix/.env`.
 
 Key sections in the env template:
 
@@ -94,13 +96,15 @@ Optional flags include `--image-tag` (override tag), `--ecr-repo` (default `phoe
    - Installs Docker & curl if missing; enables the service and adds the user to the `docker` group.
    - Installs the Docker Compose CLI plugin.
 3. Uploads the environment file, a generated `docker-compose.yml` (Phoenix, Postgres, eval runner, experiment runner), and the experiment helper script.
-4. Logs the host into ECR, pulls the latest image, and runs `docker compose up -d`.
+4. Logs the host into ECR, pulls the latest image, and starts the Phoenix service by itself so it can serve API requests.
+5. If the env file contains the placeholder value for `PHOENIX_API_KEY`, the script waits for Phoenix to become healthy, logs in with the seeded admin credentials, creates a new system API key via GraphQL, and rewrites `/opt/phoenix/.env` with the generated key (file permissions stay `600`).
+6. Finally, it runs `docker compose up -d` to start or recreate the remaining services (nginx proxy, eval runner, experiment runner) with the updated env vars.
 
 ### 4.4 Post-Deploy Steps
 
 - Reconnect to the EC2 machine (new SSH session required for Docker group membership). Confirm the `.env` permissions with `ls -l /opt/phoenix/.env` (should read `-rw-------`).
 - Visit `https://<public-ip>` or `https://<ec2-dns-name>`, accept the self-signed certificate warning in your browser, then log in with the seeded admin credentials and change the password immediately.
-- Mint a system API key for production ingestion and store it securely.
+- The deployment script already minted a system API key if you left the placeholder in the env file; view or rotate it in the Phoenix UI under **Settings → API Keys** as needed, and sync any downstream consumers if you change it later.
 - Adjust security groups to allow inbound traffic:
   - Port 443 (HTTPS) - for web UI access
   - Port 80 (HTTP) - automatically redirects to HTTPS

@@ -352,11 +352,162 @@ echo ">>> Logging into ECR from remote host"
 aws ecr get-login-password --region "$AWS_REGION" \
   | ssh -p "$EC2_SSH_PORT" "$EC2_SSH_HOST" "sudo docker login --username AWS --password-stdin ${AWS_ECR_REGISTRY}"
 
-echo ">>> Pulling and starting containers on remote host"
+echo ">>> Pulling images on remote host"
 ssh -p "$EC2_SSH_PORT" "$EC2_SSH_HOST" "REMOTE_DIR='$REMOTE_DIR' bash -s" <<'EOF'
 set -euo pipefail
 cd "$REMOTE_DIR"
 sudo docker compose pull
+EOF
+
+echo ">>> Starting Phoenix service for bootstrap"
+ssh -p "$EC2_SSH_PORT" "$EC2_SSH_HOST" "REMOTE_DIR='$REMOTE_DIR' bash -s" <<'EOF'
+set -euo pipefail
+cd "$REMOTE_DIR"
+sudo docker compose up -d phoenix
+EOF
+
+echo ">>> Bootstrapping Phoenix API key on remote host"
+ssh -p "$EC2_SSH_PORT" "$EC2_SSH_HOST" "REMOTE_DIR='$REMOTE_DIR' bash -s" <<'EOF'
+set -euo pipefail
+ENV_FILE="$REMOTE_DIR/.env"
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "Env file missing at $ENV_FILE" >&2
+  exit 1
+fi
+
+current_api_key="$(grep -m1 '^PHOENIX_API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)"
+if [[ -n "$current_api_key" && "$current_api_key" != "" && "$current_api_key" != "replace-with-phoenix-api-key" ]]; then
+  echo "Existing PHOENIX_API_KEY detected, skipping bootstrap."
+  exit 0
+fi
+
+export PHOENIX_ENV_FILE="$ENV_FILE"
+python3 <<'PY'
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.request
+import http.cookiejar
+from datetime import datetime
+
+env_file = os.environ["PHOENIX_ENV_FILE"]
+base_url = "http://localhost:6006"
+admin_email = "admin@localhost"
+admin_password = None
+existing_key = None
+
+with open(env_file, "r", encoding="utf-8") as env:
+    for line in env:
+        if line.startswith("PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD="):
+            admin_password = line.split("=", 1)[1].strip()
+        elif line.startswith("PHOENIX_API_KEY="):
+            existing_key = line.split("=", 1)[1].strip()
+
+if existing_key and existing_key not in ("", "replace-with-phoenix-api-key"):
+    print("Existing PHOENIX_API_KEY detected, skipping bootstrap.")
+    sys.exit(0)
+
+if not admin_password:
+    print("PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD missing in env file.", file=sys.stderr)
+    sys.exit(1)
+
+cookie_jar = http.cookiejar.CookieJar()
+opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookie_jar))
+
+health_url = f"{base_url}/health"
+deadline = time.time() + 300
+while time.time() < deadline:
+    try:
+        with urllib.request.urlopen(health_url, timeout=5) as response:
+            if response.status == 200:
+                break
+    except Exception:
+        time.sleep(5)
+else:
+    print("Phoenix did not become healthy within 300 seconds.", file=sys.stderr)
+    sys.exit(1)
+
+def post_json(url: str, payload: dict, expected_status: int) -> bytes:
+    data = json.dumps(payload).encode()
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    try:
+        with opener.open(request, timeout=30) as response:
+            body = response.read()
+            if response.status != expected_status:
+                raise RuntimeError(
+                    f"Unexpected status {response.status} from {url}: {body.decode('utf-8', 'ignore')}"
+                )
+            return body
+    except urllib.error.HTTPError as err:
+        body = err.read().decode("utf-8", "ignore")
+        raise RuntimeError(f"Request to {url} failed ({err.code}): {body}") from err
+
+post_json(
+    f"{base_url}/auth/login",
+    {"email": admin_email, "password": admin_password},
+    expected_status=204,
+)
+
+mutation = (
+    "mutation CreateSystemApiKey($name: String!, $description: String) {"
+    " createSystemApiKey(input: { name: $name, description: $description }) { jwt }"
+    " }"
+)
+payload = {
+    "query": mutation,
+    "variables": {
+        "name": f"deploy-{datetime.utcnow():%Y%m%d%H%M%S}",
+        "description": "Created automatically by deploy script",
+    },
+}
+
+body = post_json(f"{base_url}/graphql", payload, expected_status=200)
+result = json.loads(body.decode("utf-8"))
+
+if "errors" in result:
+    raise RuntimeError(f"GraphQL errors: {result['errors']}")
+
+try:
+    api_key = result["data"]["createSystemApiKey"]["jwt"]
+except (KeyError, TypeError):
+    raise RuntimeError(f"Unexpected GraphQL response: {result}") from None
+
+lines = []
+found = False
+with open(env_file, "r", encoding="utf-8") as env:
+    for line in env:
+        if line.startswith("PHOENIX_API_KEY="):
+            lines.append(f"PHOENIX_API_KEY={api_key}\n")
+            found = True
+        else:
+            lines.append(line)
+
+if not found:
+    lines.append(f"PHOENIX_API_KEY={api_key}\n")
+
+tmp_path = f"{env_file}.tmp"
+with open(tmp_path, "w", encoding="utf-8") as tmp:
+    tmp.writelines(lines)
+os.chmod(tmp_path, 0o600)
+os.replace(tmp_path, env_file)
+os.chmod(env_file, 0o600)
+
+print("Generated PHOENIX_API_KEY and stored it in the env file.")
+PY
+EOF
+
+echo ">>> Starting remaining services on remote host"
+ssh -p "$EC2_SSH_PORT" "$EC2_SSH_HOST" "REMOTE_DIR='$REMOTE_DIR' bash -s" <<'EOF'
+set -euo pipefail
+cd "$REMOTE_DIR"
 sudo docker compose up -d
 EOF
 
