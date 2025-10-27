@@ -21,13 +21,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import inspect
 import logging
 import os
 import sys
 from typing import Any
 
 import httpx
-from phoenix.client import Client
+from phoenix.client import Client, __version__ as phoenix_client_version
 from phoenix.evals import OpenAIModel
 from phoenix.experiments.evaluators import create_evaluator
 from phoenix.otel import register
@@ -100,6 +101,11 @@ def _parse_args() -> argparse.Namespace:
         "--user-id",
         default="experiment-user",
         help="User identifier to send to DIFY (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--project-name",
+        default=os.getenv("PHOENIX_PROJECT_NAME", "dify-experiments"),
+        help="Phoenix project name for organizing traces (default: %(default)s).",
     )
     return parser.parse_args()
 
@@ -465,10 +471,11 @@ def main() -> None:
 
     # Initialize Phoenix client and enable tracing
     phoenix_client = Client()
-    register()  # Auto-instruments OpenAI calls in evaluators
+    register(project_name=args.project_name)  # Auto-instruments OpenAI calls in evaluators
 
     phoenix_url = os.getenv("PHOENIX_BASE_URL", "http://localhost:6006")
     LOGGER.info("Connected to Phoenix at: %s", phoenix_url)
+    LOGGER.info("Phoenix project: %s", args.project_name)
 
     # Load the dataset
     if args.dataset_id:
@@ -543,7 +550,16 @@ def main() -> None:
         "dataset": dataset,
         "task": task,
         "evaluators": all_evaluators,
+        "project_name": args.project_name,
     }
+
+    run_experiment_sig = inspect.signature(phoenix_client.experiments.run_experiment)
+    if "project_name" not in run_experiment_sig.parameters:
+        LOGGER.warning(
+            "Phoenix client %s does not support project-aware experiments; default project will be used.",
+            phoenix_client_version,
+        )
+        experiment_params.pop("project_name")
 
     if args.experiment_name:
         experiment_params["experiment_name"] = args.experiment_name

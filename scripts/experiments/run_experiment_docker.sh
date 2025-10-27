@@ -17,6 +17,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # Default configuration
 DATASET_NAME="${DATASET_NAME:-Good 2025-10-20T14:32:32.450Z}"
 EXPERIMENT_NAME=""
+PROJECT_NAME="${PHOENIX_PROJECT_NAME:-dify-experiments}"
 DRY_RUN=""
 VERBOSE=""
 EXTRA_ARGS=()
@@ -58,6 +59,7 @@ Arguments:
 
 Options:
   --dataset NAME        Dataset name (default: "$DATASET_NAME")
+  --project-name NAME   Phoenix project name for traces (default: "$PROJECT_NAME")
   --dry-run [N]        Run with only N examples (default: 3)
   --verbose            Enable verbose debug logging
   --skip-qa            Skip Q&A correctness evaluator
@@ -67,6 +69,7 @@ Options:
 
 Environment Variables:
   DATASET_NAME         Default dataset name
+  PHOENIX_PROJECT_NAME Default Phoenix project name
   DIFY_BASE_URL        DIFY API endpoint (from .env)
   DIFY_API_KEY         DIFY API key (from .env)
   OPENAI_API_KEY       OpenAI API key for evaluators (from .env)
@@ -100,6 +103,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --dataset)
             DATASET_NAME="$2"
+            shift 2
+            ;;
+        --project-name)
+            PROJECT_NAME="$2"
             shift 2
             ;;
         --dry-run)
@@ -159,6 +166,7 @@ fi
 # Show configuration
 info "Configuration:"
 echo "  Dataset:       $DATASET_NAME"
+echo "  Project:       $PROJECT_NAME"
 if [[ -n "$EXPERIMENT_NAME" ]]; then
     echo "  Experiment:    $EXPERIMENT_NAME"
 fi
@@ -187,6 +195,8 @@ CMD+=(
     scripts.experiments.run_dify_experiment
     --dataset-name
     "$DATASET_NAME"
+    --project-name
+    "$PROJECT_NAME"
 )
 
 if [[ -n "$EXPERIMENT_NAME" ]]; then

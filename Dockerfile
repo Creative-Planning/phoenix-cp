@@ -39,6 +39,7 @@ RUN pnpm run build
 FROM python:3.11-bullseye as backend-builder
 WORKDIR /phoenix
 COPY ./src /phoenix/src
+COPY ./packages/phoenix-client /phoenix/packages/phoenix-client
 COPY ./pyproject.toml /phoenix/
 COPY ./LICENSE /phoenix/
 COPY ./IP_NOTICE /phoenix/
@@ -47,6 +48,10 @@ COPY --from=frontend-builder /phoenix/src/phoenix/server/static/ /phoenix/src/ph
 # Delete symbolic links used during development.
 RUN find src/ -xtype l -delete
 RUN pip install --target ./env ".[container, pg]"
+RUN pip install --target /tmp/phoenix-client --no-deps ./packages/phoenix-client && \
+    rm -rf ./env/phoenix/client && \
+    mkdir -p ./env/phoenix && \
+    cp -a /tmp/phoenix-client/phoenix/client ./env/phoenix/
 
 # The production image is distroless, meaning that it is a minimal image that
 # contains only the necessary dependencies to run the application. This is

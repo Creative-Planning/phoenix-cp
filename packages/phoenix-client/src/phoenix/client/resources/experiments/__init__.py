@@ -438,6 +438,7 @@ class Experiments:
         experiment_name: Optional[str] = None,
         experiment_description: Optional[str] = None,
         experiment_metadata: Optional[Mapping[str, Any]] = None,
+        project_name: Optional[str] = None,
         rate_limit_errors: Optional[RateLimitErrors] = None,
         dry_run: Union[bool, int] = False,
         print_summary: bool = True,
@@ -494,6 +495,8 @@ class Experiments:
                 None.
             experiment_metadata (Optional[Mapping[str, Any]]): Metadata to associate with the
                 experiment. Defaults to None.
+            project_name (Optional[str]): The Phoenix project name for organizing evaluator traces.
+                Defaults to None.
             rate_limit_errors (Optional[RateLimitErrors]): An exception or sequence of exceptions to
                 adaptively throttle on. Defaults to None.
             dry_run (Union[bool, int]): Run the experiment in dry-run mode. When set,
@@ -529,6 +532,7 @@ class Experiments:
             "name": experiment_name,
             "description": experiment_description,
             "metadata": experiment_metadata,
+            "project_name": project_name,
             "repetitions": repetitions,
         }
 
@@ -540,14 +544,16 @@ class Experiments:
             )
             experiment_response.raise_for_status()
             exp_json = experiment_response.json()["data"]
-            project_name = exp_json.get("project_name")
+            server_project_name = exp_json.get("project_name")
+            # Use provided project_name, fallback to server response
+            effective_project_name = project_name or server_project_name
             experiment: Experiment = {
                 "id": exp_json["id"],
                 "dataset_id": dataset.id,
                 "dataset_version_id": dataset.version_id,
                 "repetitions": repetitions,
                 "metadata": exp_json.get("metadata", {}),
-                "project_name": project_name,
+                "project_name": effective_project_name,
                 "created_at": exp_json["created_at"],
                 "updated_at": exp_json["updated_at"],
             }
@@ -558,7 +564,7 @@ class Experiments:
                 "dataset_version_id": dataset.version_id,
                 "repetitions": repetitions,
                 "metadata": {},
-                "project_name": None,
+                "project_name": project_name,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
@@ -1475,6 +1481,7 @@ class AsyncExperiments:
         experiment_name: Optional[str] = None,
         experiment_description: Optional[str] = None,
         experiment_metadata: Optional[Mapping[str, Any]] = None,
+        project_name: Optional[str] = None,
         rate_limit_errors: Optional[RateLimitErrors] = None,
         dry_run: Union[bool, int] = False,
         print_summary: bool = True,
@@ -1531,6 +1538,8 @@ class AsyncExperiments:
                 None.
             experiment_metadata (Optional[Mapping[str, Any]]): Metadata to associate with the
                 experiment. Defaults to None.
+            project_name (Optional[str]): The Phoenix project name for organizing evaluator traces.
+                Defaults to None.
             rate_limit_errors (Optional[RateLimitErrors]): An exception or sequence of exceptions to
                 adaptively throttle on. Defaults to None.
             dry_run (Union[bool, int]): Run the experiment in dry-run mode. When set,
@@ -1567,6 +1576,7 @@ class AsyncExperiments:
             "name": experiment_name,
             "description": experiment_description,
             "metadata": experiment_metadata,
+            "project_name": project_name,
             "repetitions": repetitions,
         }
 
@@ -1578,14 +1588,16 @@ class AsyncExperiments:
             )
             experiment_response.raise_for_status()
             exp_json = experiment_response.json()["data"]
-            project_name = exp_json["project_name"]
+            server_project_name = exp_json.get("project_name")
+            # Use provided project_name, fallback to server response
+            effective_project_name = project_name or server_project_name
             experiment: Experiment = {
                 "id": exp_json["id"],
                 "dataset_id": dataset.id,
                 "dataset_version_id": dataset.version_id,
                 "repetitions": repetitions,
                 "metadata": exp_json.get("metadata", {}),
-                "project_name": project_name,
+                "project_name": effective_project_name,
                 "created_at": exp_json["created_at"],
                 "updated_at": exp_json["updated_at"],
             }
@@ -1596,7 +1608,7 @@ class AsyncExperiments:
                 "dataset_version_id": dataset.version_id,
                 "repetitions": repetitions,
                 "metadata": {},
-                "project_name": "",
+                "project_name": project_name,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }

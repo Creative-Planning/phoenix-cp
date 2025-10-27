@@ -185,6 +185,7 @@ def run_experiment(
     experiment_name: Optional[str] = None,
     experiment_description: Optional[str] = None,
     experiment_metadata: Optional[Mapping[str, Any]] = None,
+    project_name: Optional[str] = None,
     rate_limit_errors: Optional[RateLimitErrors] = None,
     dry_run: Union[bool, int] = False,
     print_summary: bool = True,
@@ -241,6 +242,8 @@ def run_experiment(
         experiment_description (Optional[str]): A description of the experiment. Defaults to None.
         experiment_metadata (Optional[Mapping[str, Any]]): Metadata to associate with the
             experiment. Defaults to None.
+        project_name (Optional[str]): The Phoenix project name for organizing evaluator traces.
+            If not specified, defaults to "evaluators". Defaults to None.
         rate_limit_errors (Optional[BaseException | Sequence[BaseException]]): An exception or
             sequence of exceptions to adaptively throttle on. Defaults to None.
         dry_run (bool | int): Run the experiment in dry-run mode. When set, experiment results will
@@ -712,7 +715,7 @@ def evaluate_experiment(
         for (example, run), evaluator in product(example_run_pairs, evaluators_by_name.values())
     ]
 
-    tracer, resource = _get_tracer(None if dry_run else "evaluators")
+    tracer, resource = _get_tracer(None if dry_run else (project_name or "evaluators"))
     root_span_kind = EVALUATOR
 
     def sync_evaluate_run(
