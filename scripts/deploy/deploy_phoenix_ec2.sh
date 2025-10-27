@@ -154,9 +154,9 @@ install_packages() {
 
 if ! command -v docker >/dev/null 2>&1; then
   if command -v apt-get >/dev/null 2>&1; then
-    install_packages docker.io curl
+    install_packages docker.io curl openssl
   else
-    install_packages docker curl
+    install_packages docker curl openssl
   fi
   sudo systemctl enable --now docker
   sudo usermod -aG docker "$(id -un)" || true
@@ -164,6 +164,10 @@ fi
 
 if ! command -v curl >/dev/null 2>&1; then
   install_packages curl
+fi
+
+if ! command -v openssl >/dev/null 2>&1; then
+  install_packages openssl
 fi
 
 if ! docker compose version >/dev/null 2>&1; then
@@ -178,13 +182,25 @@ sudo chown "$(id -un):$(id -gn)" "$REMOTE_DIR"
 EOF
 
 tmp_compose="$(mktemp)"
+tmp_nginx_conf="$(mktemp)"
 cleanup() {
-  rm -f "$tmp_compose"
+  rm -f "$tmp_compose" "$tmp_nginx_conf"
 }
 trap cleanup EXIT
 
 cat >"$tmp_compose" <<EOF
 services:
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    depends_on:
+      - phoenix
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
   phoenix:
     image: ${ECR_IMAGE_URI}
     restart: unless-stopped
@@ -254,14 +270,76 @@ volumes:
   db-data:
 EOF
 
-echo ">>> Copying docker-compose.yml and env file to remote host"
+cat >"$tmp_nginx_conf" <<'NGINX_EOF'
+events {
+    worker_connections 1024;
+}
+
+http {
+    upstream phoenix {
+        server phoenix:6006;
+    }
+
+    # Redirect HTTP to HTTPS
+    server {
+        listen 80;
+        server_name _;
+        return 301 https://$host$request_uri;
+    }
+
+    # HTTPS server
+    server {
+        listen 443 ssl;
+        server_name _;
+
+        ssl_certificate /etc/nginx/ssl/cert.pem;
+        ssl_certificate_key /etc/nginx/ssl/key.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers HIGH:!aNULL:!MD5;
+
+        client_max_body_size 100M;
+
+        location / {
+            proxy_pass http://phoenix;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_read_timeout 86400;
+        }
+    }
+}
+NGINX_EOF
+
+echo ">>> Copying docker-compose.yml, nginx.conf, and env file to remote host"
 scp -P "$EC2_SSH_PORT" "$tmp_compose" "${EC2_SSH_HOST}:${REMOTE_DIR}/docker-compose.yml"
+scp -P "$EC2_SSH_PORT" "$tmp_nginx_conf" "${EC2_SSH_HOST}:${REMOTE_DIR}/nginx.conf"
 scp -P "$EC2_SSH_PORT" "$ENV_FILE" "${EC2_SSH_HOST}:${REMOTE_DIR}/.env"
 
 echo ">>> Syncing experiment helper scripts"
 ssh -p "$EC2_SSH_PORT" "$EC2_SSH_HOST" "mkdir -p '${REMOTE_DIR}/scripts/experiments'"
 scp -P "$EC2_SSH_PORT" "$REPO_ROOT/scripts/experiments/run_experiment_docker.sh" "${EC2_SSH_HOST}:${REMOTE_DIR}/scripts/experiments/run_experiment_docker.sh"
 ssh -p "$EC2_SSH_PORT" "$EC2_SSH_HOST" "chmod +x '${REMOTE_DIR}/scripts/experiments/run_experiment_docker.sh'"
+
+echo ">>> Generating self-signed SSL certificate on remote host"
+ssh -p "$EC2_SSH_PORT" "$EC2_SSH_HOST" "REMOTE_DIR='$REMOTE_DIR' bash -s" <<'EOF'
+set -euo pipefail
+mkdir -p "$REMOTE_DIR/ssl"
+if [[ ! -f "$REMOTE_DIR/ssl/cert.pem" ]] || [[ ! -f "$REMOTE_DIR/ssl/key.pem" ]]; then
+  echo "Generating new self-signed certificate (valid for 365 days)..."
+  openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout "$REMOTE_DIR/ssl/key.pem" \
+    -out "$REMOTE_DIR/ssl/cert.pem" \
+    -subj "/C=US/ST=State/L=City/O=Organization/CN=phoenix.local" \
+    2>/dev/null
+  echo "Certificate generated successfully"
+else
+  echo "Existing SSL certificate found, reusing"
+fi
+EOF
 
 echo ">>> Logging into ECR from remote host"
 aws ecr get-login-password --region "$AWS_REGION" \
@@ -276,4 +354,22 @@ sudo docker compose up -d
 EOF
 
 echo "Deployment complete."
-echo "Verify Phoenix UI at http://<ec2-public-ip>:6006 once security groups allow access."
+echo ""
+echo "Phoenix is now accessible via HTTPS with a self-signed certificate."
+echo ""
+echo "UI Access (for end users):"
+echo "  https://<ec2-public-ip> or https://<ec2-dns-name>"
+echo ""
+echo "API/Trace Ingestion (for DIFY and other applications):"
+echo "  HTTP endpoint: http://<ec2-public-ip>:6006"
+echo "  OTLP/gRPC endpoint: http://<ec2-public-ip>:4317"
+echo ""
+echo "Note: Your browser will show a security warning for HTTPS because the certificate is self-signed."
+echo "      This is expected. Click 'Advanced' and 'Proceed' to access the application."
+echo ""
+echo "Security group requirements:"
+echo "  - Port 443 (HTTPS) - for web UI access"
+echo "  - Port 80 (HTTP) - automatically redirects to HTTPS"
+echo "  - Port 6006 (HTTP) - for Phoenix API and trace ingestion (DIFY uses this)"
+echo "  - Port 4317 (gRPC) - for OTLP trace ingestion"
+echo "  - Port 22 (SSH) - for deployment and management"

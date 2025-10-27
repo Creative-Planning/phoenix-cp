@@ -95,11 +95,65 @@ Optional flags include `--image-tag` (override tag), `--ecr-repo` (default `phoe
 ### 4.4 Post-Deploy Steps
 
 - Reconnect to the EC2 machine (new SSH session required for Docker group membership).
-- Visit `http://<public-ip>:6006`, log in with the seeded admin credentials, and change the password immediately.
+- Visit `https://<public-ip>` or `https://<ec2-dns-name>`, accept the self-signed certificate warning in your browser, then log in with the seeded admin credentials and change the password immediately.
 - Mint a system API key for production ingestion.
-- Adjust security groups / load balancer rules to restrict access to port 6006.
+- Adjust security groups to allow inbound traffic:
+  - Port 443 (HTTPS) - for web UI access
+  - Port 80 (HTTP) - automatically redirects to HTTPS
+  - Port 6006 (HTTP) - for Phoenix API and trace ingestion (DIFY uses this)
+  - Port 4317 (gRPC) - for OTLP trace ingestion (optional, DIFY uses HTTP)
+  - Port 22 (SSH) - for deployment and management
 
-### 4.5 Ongoing Operations
+**Note on HTTPS:** The deployment uses a self-signed SSL certificate for UI access. Browsers will show a security warning on first access. Click "Advanced" and "Proceed" to accept the certificate. The certificate is valid for 365 days and persists across redeployments.
+
+**Architecture Overview:**
+```
+End Users (Browser)
+    |
+    | HTTPS (port 443)
+    v
+┌─────────────────────┐
+│  Nginx Reverse Proxy│
+│  (self-signed cert) │
+└─────────────────────┘
+    |
+    | HTTP
+    v
+┌─────────────────────┐      ┌──────────────────┐
+│  Phoenix Container  │◄─────┤  PostgreSQL DB   │
+│  - UI (port 6006)   │      └──────────────────┘
+│  - API (/v1/traces) │
+│  - OTLP (port 4317) │
+└─────────────────────┘
+    ^
+    | HTTP (port 6006)
+    |
+DIFY (Trace Ingestion)
+```
+
+**Access Patterns:**
+- **End users:** Access the Phoenix UI via `https://<ec2-ip>` (HTTPS through Nginx reverse proxy)
+- **DIFY trace ingestion:** Configure DIFY to send traces to `http://<ec2-ip>:6006` with your Phoenix project name and API key
+- The architecture provides both secure UI access and direct HTTP API access for trace ingestion
+
+### 4.5 Configuring DIFY to Send Traces to EC2 Phoenix
+
+Once Phoenix is deployed on EC2, configure your DIFY instance to send traces:
+
+1. **In DIFY UI:** Navigate to your app → Settings → Tracing
+2. **Select Phoenix/Arize as provider**
+3. **Configure the endpoint:**
+   - Endpoint: `http://<ec2-public-ip>:6006` (use the public IP or DNS name of your EC2 instance)
+   - Project: Your Phoenix project name (e.g., `default`)
+   - API Key: The Phoenix API key you generated in the Phoenix UI
+4. **Test the connection** - DIFY will send a test span to verify connectivity
+5. **Save the configuration**
+
+DIFY uses the HTTP OTLP exporter and will send traces to `http://<ec2-ip>:6006/v1/traces`. The traces will appear in the Phoenix UI under the configured project name.
+
+**Note:** DIFY sends traces via HTTP (not HTTPS), which is why port 6006 is exposed directly. This is standard for OpenTelemetry trace ingestion between internal services.
+
+### 4.6 Ongoing Operations
 
 - Redeploy with the same command whenever the code changes—provide `--image-tag` to roll back.
 - Rotate secrets by editing the env file locally and re-running the deploy script (it re-syncs `.env`).
@@ -107,4 +161,4 @@ Optional flags include `--image-tag` (override tag), `--ecr-repo` (default `phoe
 
 ## 5. Keeping Docs Organized
 
-Custom documentation for our “InTheBox” deployment lives in `docs/inthebox/`. Add future guides or updates here so teammates can quickly spot the pieces that differ from upstream Phoenix.
+Custom documentation for our deployment lives in `docs/creative-planning/`. Add future guides or updates here so teammates can quickly spot the pieces that differ from upstream Phoenix.
