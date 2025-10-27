@@ -29,7 +29,7 @@ from typing import Any
 
 import httpx
 from phoenix.client import Client, __version__ as phoenix_client_version
-from phoenix.evals import OpenAIModel
+from phoenix.evals import BedrockModel, OpenAIModel
 from phoenix.experiments.evaluators import create_evaluator
 from phoenix.otel import register
 
@@ -67,6 +67,22 @@ def _parse_args() -> argparse.Namespace:
         "--eval-model",
         default=os.getenv("EVAL_MODEL", "gpt-4o"),
         help="LLM model to use as judge for evaluations (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--eval-provider",
+        default=os.getenv("EVAL_PROVIDER", "openai"),
+        choices=("openai", "bedrock"),
+        help="LLM provider for evaluations (default: %(default)s).",
+    )
+    parser.add_argument(
+        "--bedrock-region",
+        default=os.getenv("BEDROCK_REGION") or os.getenv("AWS_REGION"),
+        help="AWS region to use with the Bedrock provider (falls back to AWS_REGION env).",
+    )
+    parser.add_argument(
+        "--bedrock-profile",
+        default=os.getenv("BEDROCK_PROFILE"),
+        help="Optional AWS profile name to use with the Bedrock provider.",
     )
     parser.add_argument(
         "--skip-qa",
@@ -245,6 +261,51 @@ class DifyTaskRunner:
             }
 
 
+def build_eval_model(
+    provider: str,
+    model_name: str,
+    *,
+    bedrock_region: str | None = None,
+    bedrock_profile: str | None = None,
+) -> Any:
+    """
+    Create the evaluation model used by Phoenix evaluators.
+
+    Supports OpenAI (default) and AWS Bedrock providers.
+    """
+    normalized_provider = provider.lower()
+
+    if normalized_provider == "openai":
+        return OpenAIModel(model_name=model_name)
+
+    if normalized_provider == "bedrock":
+        session = None
+
+        if bedrock_profile or bedrock_region:
+            try:
+                import boto3  # type: ignore
+            except ImportError as exc:  # pragma: no cover - nicer error for missing dep
+                raise RuntimeError(
+                    "boto3 is required to use the Bedrock eval provider."
+                ) from exc
+
+            session_kwargs: dict[str, str] = {}
+            if bedrock_profile:
+                session_kwargs["profile_name"] = bedrock_profile
+            if bedrock_region:
+                session_kwargs["region_name"] = bedrock_region
+
+            session = boto3.session.Session(**session_kwargs)
+
+        model_kwargs: dict[str, Any] = {"model_id": model_name}
+        if session is not None:
+            model_kwargs["session"] = session
+
+        return BedrockModel(**model_kwargs)
+
+    raise ValueError(f"Unsupported eval provider '{provider}'.")
+
+
 def create_custom_evaluators() -> list:
     """Create custom code evaluators specific to DIFY workflow."""
 
@@ -272,7 +333,7 @@ def create_custom_evaluators() -> list:
     return [has_answer, no_error, has_retrieval, retrieval_count]
 
 
-def setup_llm_evaluators(model_name: str, skip_qa: bool = False) -> list:
+def setup_llm_evaluators(model: Any, model_name: str, skip_qa: bool = False) -> list:
     """
     Set up custom LLM evaluators that wrap Phoenix legacy evaluators.
 
@@ -285,7 +346,6 @@ def setup_llm_evaluators(model_name: str, skip_qa: bool = False) -> list:
         QAEvaluator as LegacyQAEvaluator,
     )
 
-    model = OpenAIModel(model_name=model_name)
     evaluators = []
 
     # Hallucination evaluator: checks if answer contradicts retrieved documents
@@ -449,7 +509,12 @@ def setup_llm_evaluators(model_name: str, skip_qa: bool = False) -> list:
         evaluators.append(qa_evaluator)
         LOGGER.info("Q&A correctness evaluator included (requires expected answer in dataset)")
 
-    LOGGER.info("Initialized %d LLM evaluators with model: %s", len(evaluators), model_name)
+    LOGGER.info(
+        "Initialized %d LLM evaluators with model: %s (%s)",
+        len(evaluators),
+        model_name,
+        model.__class__.__name__,
+    )
 
     return evaluators
 
@@ -468,6 +533,13 @@ def main() -> None:
     LOGGER.info("Starting DIFY experiment runner")
     LOGGER.info("Dataset: %s", args.dataset_name or args.dataset_id)
     LOGGER.info("DIFY URL: %s", args.dify_base_url)
+    LOGGER.info("Evaluation provider: %s", args.eval_provider)
+    LOGGER.info("Evaluation model: %s", args.eval_model)
+    if args.eval_provider.lower() == "bedrock":
+        if args.bedrock_region:
+            LOGGER.info("Bedrock region: %s", args.bedrock_region)
+        if args.bedrock_profile:
+            LOGGER.info("Bedrock profile: %s", args.bedrock_profile)
 
     # Initialize Phoenix client and enable tracing
     phoenix_client = Client()
@@ -537,7 +609,25 @@ def main() -> None:
 
     # Set up evaluators
     custom_evaluators = create_custom_evaluators()
-    llm_evaluators = setup_llm_evaluators(args.eval_model, skip_qa=args.skip_qa)
+    try:
+        eval_model = build_eval_model(
+            args.eval_provider,
+            args.eval_model,
+            bedrock_region=args.bedrock_region,
+            bedrock_profile=args.bedrock_profile,
+        )
+    except Exception as exc:
+        LOGGER.error("Failed to initialize evaluation model: %s", exc)
+        sys.exit(1)
+
+    if args.eval_provider.lower() == "bedrock" and args.eval_model == "gpt-4o":
+        LOGGER.warning(
+            "The default OpenAI model '%s' is not available on Bedrock. "
+            "Set --eval-model to a valid Bedrock model identifier (e.g., 'anthropic.claude-3-5-haiku-20241022-v1:0').",
+            args.eval_model,
+        )
+
+    llm_evaluators = setup_llm_evaluators(eval_model, args.eval_model, skip_qa=args.skip_qa)
 
     all_evaluators = custom_evaluators + llm_evaluators
 
