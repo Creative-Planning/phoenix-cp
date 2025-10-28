@@ -14,7 +14,7 @@ All local Docker Compose runs and EC2 deployments share the same environment fil
 
 Key sections in the env template:
 
-- **Phoenix auth:** enable login (`PHOENIX_ENABLE_AUTH=true`), set long `PHOENIX_SECRET`, `PHOENIX_ADMIN_SECRET`, and rotate the default admin password.
+- **Phoenix auth:** enable login (`PHOENIX_ENABLE_AUTH=true`), set long `PHOENIX_SECRET`, `PHOENIX_ADMIN_SECRET`, and provide a strong `PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD` so the deploy script can authenticate when bootstrapping API keys.
 - **Database:** Postgres runs as a sidecar; change the user/password as needed.
 - **Phoenix API access:** `PHOENIX_API_KEY` is generated from the Phoenix UI and is consumed by our runners.
 - **LLM/Evaluator settings:** `OPENAI_API_KEY`, `EVAL_MODEL`, and the knobs that control cadence/explanations.
@@ -69,7 +69,8 @@ Script: `scripts/deploy/deploy_phoenix_ec2.sh`.
 
 ### 4.1 Prerequisites
 
-- **Local machine:** AWS CLI configured with permission to describe/create ECR repos, push images, and start SSM/EC2 actions; Docker CLI able to build the Phoenix image; SSH key with access to the target instance.
+- **Local machine:** AWS CLI configured with permission to describe/create ECR repos, push images, and start SSM/EC2 actions; Docker CLI able to build the Phoenix image; SSH key with access to the target instance. Make the deploy script executable (`chmod +x scripts/deploy/deploy_phoenix_ec2.sh`) or run it via `bash scripts/deploy/deploy_phoenix_ec2.sh`.
+- **SSH setup:** Ensure the key you use for manual SSH (e.g., `~/.ssh/phoenix-ec2.pem`) is available to the deploy script. Start an agent with `eval "$(ssh-agent -s)"` and add the key via `ssh-add ~/.ssh/phoenix-ec2.pem`, or add a host entry in `~/.ssh/config` so plain `ssh ec2-user@<host>` works.
 - **EC2 baseline:** Launch Ubuntu 22.04 LTS or Amazon Linux 2023 (recommend `t3.large` or `t3a.large`, 2 vCPU / 8 GB RAM minimum) with a 40–60 GB gp3 volume. Update packages (`sudo apt-get update && sudo apt-get upgrade -y` or equivalent) and ensure the user you deploy with has passwordless sudo. The script can install Docker/Compose, but outbound HTTPS (ports 443/80) must be allowed so it can download packages.
 - **IAM:** Attach an instance profile that can pull from the Phoenix ECR repo and, if you later migrate secrets to AWS Secrets Manager or Parameter Store, grant `secretsmanager:GetSecretValue` / `ssm:GetParameter`.
 - **Networking:** Create or reuse a security group that allows inbound 22/80/443/6006/4317 from your office/VPC ranges only. Allow all outbound traffic so the containers can reach OpenAI, Bedrock, or Dify endpoints. Optionally allocate an Elastic IP so DNS remains stable.
@@ -171,6 +172,14 @@ DIFY uses the HTTP OTLP exporter and will send traces to `http://<ec2-ip>:6006/v
 - Rotate secrets by editing the env file locally and re-running the deploy script (it re-syncs `.env`).
 - For longer-lived environments, migrate the env variables to AWS Secrets Manager or SSM Parameter Store and modify the deploy script or a systemd unit to render `.env` from those sources during boot.
 - Experiment execution and dataset uploads can be initiated on the EC2 box via the copied script or via Phoenix APIs using the shared env file.
+
+### 4.7 Troubleshooting Notes
+
+- **SSH `Permission denied (publickey,…)`:** Confirm the deploy script can use your private key. Start `ssh-agent`, add the key with `ssh-add`, or create an entry in `~/.ssh/config` so passwordless `ssh ec2-user@<host>` succeeds.
+- **Amazon Linux `curl-minimal` conflict:** Some Amazon Linux 2023 AMIs ship `curl-minimal`, which conflicts with the full `curl` package the script installs. Resolve with `sudo dnf install -y curl --allowerasing` (or remove `curl-minimal` first) and rerun the deployment.
+- **Bootstrap skipped because `PHOENIX_API_KEY` exists:** The script only generates a new system API key when the env file lacks a value (placeholder or empty). Comment out or remove the `PHOENIX_API_KEY=` line locally before re-deploying if you need a fresh key.
+- **Missing `PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD`:** Without this env var the script cannot authenticate to create system API keys. Always provide a strong value before deployment and change the password via the UI after first login.
+- **`OPENAI_API_KEY` warnings:** Docker Compose logs warn when optional evaluator providers are unset. Set them in the env file if you plan to run OpenAI-backed evaluators; otherwise the warnings are benign.
 
 ## 5. Keeping Docs Organized
 
