@@ -136,9 +136,10 @@ phoenix/
 │   ├── run_experiment_docker.sh    # Docker wrapper (use this!)
 │   ├── QUICKSTART.md               # This file
 │   └── README.md                   # Full documentation
-└── docs/cp-docs/
-    ├── running-experiments-docker.md   # Detailed Docker guide
-    └── dify-experiments-quickstart.md  # Workflow tutorial
+└── docs/creative-planning/
+    ├── experiments-docker.md       # Detailed Docker guide
+    ├── experiments-guide.md        # Comprehensive workflow tutorial
+    └── dify-api-reference.md       # DIFY API documentation
 ```
 
 ## Next Steps
@@ -151,6 +152,7 @@ phoenix/
 
 ## Full Documentation
 
-- [Detailed Docker Guide](../../docs/cp-docs/running-experiments-docker.md)
-- [Experiment Workflow Guide](../../docs/cp-docs/dify-experiments-quickstart.md)
+- [Experiments Guide](../../docs/creative-planning/experiments-guide.md)
+- [Docker-Specific Guide](../../docs/creative-planning/experiments-docker.md)
 - [Experiment Script README](./README.md)
+- [Deployment Guide](../../docs/creative-planning/deployment.md)

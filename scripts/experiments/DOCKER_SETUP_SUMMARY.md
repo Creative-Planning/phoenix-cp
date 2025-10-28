@@ -81,7 +81,7 @@ DIFY_BASE_URL=http://host.docker.internal:7788
 
 Quick reference card for common commands and troubleshooting.
 
-### 5. `docs/cp-docs/running-experiments-docker.md`
+### 5. `docs/creative-planning/experiments-docker.md`
 
 Comprehensive guide covering:
 - Architecture and networking
@@ -275,8 +275,9 @@ docker compose restart phoenix
 ## Documentation
 
 - **Quick Start:** `scripts/experiments/QUICKSTART.md`
-- **Docker Guide:** `docs/cp-docs/running-experiments-docker.md`
-- **Workflow Tutorial:** `docs/cp-docs/dify-experiments-quickstart.md`
+- **Experiments Guide:** `docs/creative-planning/experiments-guide.md`
+- **Docker Guide:** `docs/creative-planning/experiments-docker.md`
+- **Deployment Guide:** `docs/creative-planning/deployment.md`
 - **Script README:** `scripts/experiments/README.md`
 
 ## Benefits of This Approach

@@ -1,6 +1,6 @@
 # Dify RAG Evaluation & Deployment Playbook
 
-> Audience: Platform/DevOps engineers responsible for running Phoenix + Dify infrastructure. For analyst-facing experiment instructions, point stakeholders to `docs/creative-planning/how-to-guide.md`.
+> Audience: Platform/DevOps engineers responsible for running Phoenix + Dify infrastructure. For analyst-facing experiment instructions, point stakeholders to `experiments-guide.md`.
 
 This guide documents the pieces we’ve added on top of upstream Phoenix so the team can run evaluations and deploy the stack on EC2 in a consistent way.
 

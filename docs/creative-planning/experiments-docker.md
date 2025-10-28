@@ -410,7 +410,8 @@ Use `--skip-qa` to reduce to 2 evals per example and cut costs by ~33%.
 
 ## See Also
 
-- [Quick Start Guide](./dify-experiments-quickstart.md)
+- [Experiments Guide](./experiments-guide.md)
 - [Experiment Script README](../../scripts/experiments/README.md)
-- [DIFY API Documentation](./dify-api.md)
+- [DIFY API Documentation](./dify-api-reference.md)
+- [Deployment Guide](./deployment.md)
 - [Phoenix Experiments Docs](https://arize.com/docs/phoenix/datasets-and-experiments/)

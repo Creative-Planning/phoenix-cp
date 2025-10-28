@@ -1009,5 +1009,5 @@ Before deploying to production:
 
 - Phoenix Experiments Docs: https://arize.com/docs/phoenix/datasets-and-experiments/how-to-experiments/run-experiments
 - FastAPI Security: https://fastapi.tiangolo.com/tutorial/security/
-- DIFY API Documentation: `/docs/cp-docs/dify-api.md`
+- DIFY API Documentation: `/docs/creative-planning/dify-api-reference.md`
 - Experiment Runner Script: `/scripts/experiments/run_dify_experiment.py`

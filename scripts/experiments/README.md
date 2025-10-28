@@ -294,7 +294,9 @@ custom_evaluators = create_custom_evaluators() + [answer_length, is_concise]
 
 ## See Also
 
+- [Experiments Guide](../../docs/creative-planning/experiments-guide.md)
+- [Docker-Specific Guide](../../docs/creative-planning/experiments-docker.md)
+- [DIFY API Reference](../../docs/creative-planning/dify-api-reference.md)
 - [Phoenix Datasets Docs](https://arize.com/docs/phoenix/datasets-and-experiments/how-to-datasets/)
 - [Phoenix Experiments Docs](https://arize.com/docs/phoenix/datasets-and-experiments/how-to-experiments/)
 - [Phoenix Evaluators Docs](https://arize.com/docs/phoenix/evaluation/evals)
-- [DIFY API Docs](../cp-docs/dify-api.md)
