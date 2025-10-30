@@ -1,239 +1,269 @@
-import { useCallback, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   Button,
-  ButtonProps,
+  type ButtonProps,
   Dialog,
-  DialogTrigger,
-  ExternalLink,
-  Icon,
-  Icons,
-  Modal,
-  ModalOverlay,
-  Text,
-  View,
-} from "@phoenix/components";
-import { IsAdmin, IsAuthenticated } from "@phoenix/components/auth";
-import { CodeLanguage, CodeLanguageRadioGroup } from "@phoenix/components/code";
-import { CodeWrap } from "@phoenix/components/code/CodeWrap";
-import { PythonBlockWithCopy } from "@phoenix/components/code/PythonBlockWithCopy";
-import { TypeScriptBlockWithCopy } from "@phoenix/components/code/TypeScriptBlockWithCopy";
-import {
   DialogCloseButton,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogTitleExtra,
-} from "@phoenix/components/dialog";
-import { BASE_URL } from "@phoenix/config";
+  DialogTrigger,
+  Flex,
+  Icon,
+  Icons,
+  Input,
+  Label,
+  ListBox,
+  Loading,
+  Modal,
+  ModalOverlay,
+  Popover,
+  Select,
+  SelectChevronUpDownIcon,
+  SelectItem,
+  SelectValue,
+  Text,
+  TextField,
+  View,
+} from "@phoenix/components";
+import { useNotifyError, useNotifySuccess } from "@phoenix/contexts";
 import { useDatasetContext } from "@phoenix/contexts/DatasetContext";
+import { prependBasename } from "@phoenix/utils/routingUtils";
 
-const INSTALL_PHOENIX_PYTHON = `pip install arize-phoenix-client`;
-// TODO: plumb though session URL from the backend
-function getSetBaseUrlPython({ isAuthEnabled }: { isAuthEnabled: boolean }) {
-  let setBaseURLPython =
-    `import os\n` +
-    `# Set the phoenix base url to point to your Phoenix instance \n` +
-    `os.environ["PHOENIX_BASE_URL"] = "${BASE_URL}"`;
-  if (isAuthEnabled) {
-    setBaseURLPython +=
-      `\n` +
-      `# Configure access\n` +
-      `os.environ["PHOENIX_API_KEY"] = "<your-api-key>"`;
-  }
-  return setBaseURLPython;
-}
-const TASK_PYTHON =
-  `# Define your task\n` +
-  `# Typically should be an LLM call or a call to invoke your application\n` +
-  `def my_task(example):\n` +
-  `    # This is just an example of how to return a JSON serializable value\n` +
-  `    return f"Hello {example.input['person']}"`;
-
-const EVALUATOR_PYTHON =
-  `# Define an evaluator. This just an example.\n` +
-  `def exact_match(input, output) -> float:\n` +
-  `    return 1.0 if output is f"Hello {input}" else 0.0\n\n` +
-  `# Store the evaluators for later use\n` +
-  `evaluators = [exact_match]`;
-
-const RUN_EXPERIMENT_PYTHON =
-  `# Run an experiment\n` +
-  `from phoenix.client.experiments import run_experiment\n\n` +
-  `experiment = run_experiment(dataset, my_task, evaluators=evaluators)`;
-
-function getDatasetTypeScriptCode(datasetId: string, experimentName: string) {
-  return `import { createClient } from "@arizeai/phoenix-client";
-import {
-  asEvaluator,
-  runExperiment,
-} from "@arizeai/phoenix-client/experiments";
-import type { Example } from "@arizeai/phoenix-client/types/datasets";
-import OpenAI from "openai";
-
-const phoenix = createClient();
-const openai = new OpenAI();
-
-/** Your AI Task  */
-const task = async (example: Example) => {
-  const response = await openai.chat.completions.create({
-    model: "gpt-4o",
-    messages: [
-      { role: "system", content: "You are a helpful assistant." },
-      { role: "user", content: JSON.stringify(example.input, null, 2) },
-    ],
-  });
-  return response.choices[0]?.message?.content ?? "No response";
+type ExperimentScript = {
+  key: string;
+  label: string;
+  description: string;
 };
 
-/** Exact match evaluator */
-const exactMatch = asEvaluator({
-  name: "Exact Match",
-  kind: "custom",
-  evaluate: async ({ input, output, expected }) => {
-    return {
-      score: output === expected ? 1.0 : 0.0,
-      label: output === expected ? "match" : "no_match",
-      explanation: "Expected: " + expected + ", Got: " + output,
-      metadata: {},
+type RunExperimentResponse = {
+  jobId: string;
+  status: string;
+  logUrl: string;
+  statusUrl: string;
+};
+
+async function fetchExperimentScripts(): Promise<ExperimentScript[]> {
+  const response = await fetch(prependBasename("/v1/experiment-scripts"));
+  if (!response.ok) {
+    throw new Error("Failed to load experiment scripts");
+  }
+  const data = await response.json();
+  return data?.data ?? [];
+}
+
+interface RunExperimentDialogProps {
+  close: () => void;
+}
+
+function RunExperimentDialog({ close }: RunExperimentDialogProps) {
+  const [scripts, setScripts] = useState<ExperimentScript[]>([]);
+  const [isLoadingScripts, setIsLoadingScripts] = useState(true);
+  const [scriptsError, setScriptsError] = useState<string | null>(null);
+  const [selectedScript, setSelectedScript] = useState<string | null>(null);
+  const [experimentName, setExperimentName] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const datasetId = useDatasetContext((state) => state.datasetId);
+  const datasetName = useDatasetContext((state) => state.datasetName);
+
+  const notifySuccess = useNotifySuccess();
+  const notifyError = useNotifyError();
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadScripts = async () => {
+      try {
+        setIsLoadingScripts(true);
+        const scriptList = await fetchExperimentScripts();
+        if (!isMounted) {
+          return;
+        }
+        setScripts(scriptList);
+        if (scriptList.length > 0) {
+          setSelectedScript(scriptList[0]?.key ?? null);
+        }
+        setScriptsError(null);
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+        setScriptsError(
+          error instanceof Error ? error.message : "Failed to load scripts."
+        );
+      } finally {
+        if (isMounted) {
+          setIsLoadingScripts(false);
+        }
+      }
     };
-  },
-});
+    loadScripts();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
-await runExperiment({
-  dataset: { datasetId: "${datasetId}" },
-  experimentName: "${experimentName}",
-  client: phoenix,
-  task,
-  evaluators: [exactMatch],
-});`;
-}
+  const scriptOptions = useMemo(() => {
+    return scripts.map((script) => ({
+      key: script.key,
+      label: script.label,
+      description: script.description,
+    }));
+  }, [scripts]);
 
-function RunExperimentPythonExample() {
-  const datasetName = useDatasetContext((state) => state.datasetName);
-  const version = useDatasetContext((state) => state.latestVersion);
-  const isAuthEnabled = window.Config.authenticationEnabled;
-
-  const getDatasetPythonCode = useCallback(() => {
-    return (
-      `from phoenix.client import Client\n` +
-      `# Initialize a phoenix client\n` +
-      `client = Client()\n` +
-      `# Get the current dataset version. You can omit the version for the latest.\n` +
-      `dataset = client.datasets.get_dataset(dataset="${datasetName}"${version ? `, version_id="${version.id}"` : ""})`
-    );
-  }, [datasetName, version]);
+  const onSubmit = async () => {
+    if (!selectedScript) {
+      notifyError({
+        title: "No script selected",
+        message: "Please choose an experiment script before running.",
+      });
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const payload: Record<string, unknown> = {
+        scriptKey: selectedScript,
+      };
+      const trimmedName = experimentName.trim();
+      if (trimmedName.length > 0) {
+        payload.experimentName = trimmedName;
+      }
+      const response = await fetch(
+        prependBasename(`/v1/datasets/${datasetId}/run-experiment`),
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || "Failed to start experiment");
+      }
+      const data = (await response.json()) as RunExperimentResponse;
+      const logUrl = prependBasename(data.logUrl);
+      notifySuccess({
+        title: "Experiment started",
+        message: `Job ${data.jobId} queued for dataset "${datasetName}".`,
+        action: {
+          text: "View Log",
+          onClick: (closeToast) => {
+            window.open(logUrl, "_blank", "noopener,noreferrer");
+            closeToast();
+          },
+        },
+      });
+      close();
+    } catch (error) {
+      notifyError({
+        title: "Failed to run experiment",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unexpected error starting experiment.",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
-    <View overflow="auto">
-      <View paddingBottom="size-100">
-        <Text>Install the Phoenix Client</Text>
-      </View>
-      <CodeWrap>
-        <PythonBlockWithCopy value={INSTALL_PHOENIX_PYTHON} />
-      </CodeWrap>
-      <View paddingTop="size-100" paddingBottom="size-100">
-        <Text>Point to a running instance of Phoenix</Text>
-      </View>
-      <CodeWrap>
-        <PythonBlockWithCopy value={getSetBaseUrlPython({ isAuthEnabled })} />
-      </CodeWrap>
-      <IsAuthenticated>
-        <View paddingBottom="size-100" paddingTop="size-100">
-          <IsAdmin
-            fallback={
-              <Text>
-                Your personal API keys can be created and managed on your{" "}
-                <ExternalLink href="/profile">Profile</ExternalLink>
-              </Text>
-            }
-          >
-            <Text>
-              System API keys can be created and managed in{" "}
-              <ExternalLink href="/settings/general">Settings</ExternalLink>
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>Run Experiment</DialogTitle>
+        <DialogTitleExtra>
+          <DialogCloseButton slot="close" />
+        </DialogTitleExtra>
+      </DialogHeader>
+      <View padding="size-300" width="100%" maxWidth={480}>
+        <Flex direction="column" gap="size-200">
+          <Text>
+            Select a Python experiment runner and execute it against the current
+            dataset. Credentials for Dify and evaluators must already be
+            configured via environment variables.
+          </Text>
+          <Flex direction="row" gap="size-50">
+            <Text weight="semibold">Dataset:</Text>
+            <Text>{datasetName}</Text>
+          </Flex>
+          {isLoadingScripts ? (
+            <Loading />
+          ) : scriptsError ? (
+            <Text color="danger">{scriptsError}</Text>
+          ) : scripts.length === 0 ? (
+            <Text color="danger">
+              No experiment scripts are available. Add an entry in the Phoenix
+              backend to enable this feature.
             </Text>
-          </IsAdmin>
-        </View>
-      </IsAuthenticated>
-      <View paddingTop="size-100" paddingBottom="size-100">
-        <Text>Pull down this dataset</Text>
-      </View>
-      <CodeWrap>
-        <PythonBlockWithCopy value={getDatasetPythonCode()} />
-      </CodeWrap>
-      <View paddingTop="size-100" paddingBottom="size-100">
-        <Text>Define your task</Text>
-      </View>
-      <CodeWrap>
-        <PythonBlockWithCopy value={TASK_PYTHON} />
-      </CodeWrap>
-      <View paddingTop="size-100" paddingBottom="size-100">
-        <Text>Define evaluators</Text>
-      </View>
-      <CodeWrap>
-        <PythonBlockWithCopy value={EVALUATOR_PYTHON} />
-      </CodeWrap>
-      <View paddingTop="size-100" paddingBottom="size-100">
-        <Text>Run an experiment</Text>
-      </View>
-      <CodeWrap>
-        <PythonBlockWithCopy value={RUN_EXPERIMENT_PYTHON} />
-      </CodeWrap>
-    </View>
-  );
-}
-
-function RunExperimentTypeScriptExample() {
-  const datasetName = useDatasetContext((state) => state.datasetName);
-  // You could add experimentName state or prop if needed
-  return (
-    <View overflow="auto">
-      <View paddingBottom="size-100">
-        <Text>Install Phoenix Client</Text>
-      </View>
-      <CodeWrap>
-        <TypeScriptBlockWithCopy
-          value={`npm install @arizeai/phoenix-client`}
-        />
-      </CodeWrap>
-      <View paddingTop="size-100" paddingBottom="size-100">
-        <Text>Run an experiment</Text>
-      </View>
-      <CodeWrap>
-        <TypeScriptBlockWithCopy
-          value={getDatasetTypeScriptCode(datasetName, "experiment_name")}
-        />
-      </CodeWrap>
-    </View>
-  );
-}
-
-function RunExperimentExampleSwitcher() {
-  const [language, setLanguage] = useState<CodeLanguage>("Python");
-  return (
-    <Dialog>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Run Experiment</DialogTitle>
-          <DialogTitleExtra>
-            <DialogCloseButton slot="close" />
-          </DialogTitleExtra>
-        </DialogHeader>
-        <View padding="size-400" overflow="auto">
-          <View paddingBottom="size-200">
-            <CodeLanguageRadioGroup
-              language={language}
-              onChange={setLanguage}
-            />
-          </View>
-          {language === "Python" ? (
-            <RunExperimentPythonExample />
           ) : (
-            <RunExperimentTypeScriptExample />
+            <>
+              <Select
+                selectedKey={selectedScript ?? undefined}
+                onSelectionChange={(key) =>
+              setSelectedScript(key as string | null)
+            }
+            placeholder="Select an experiment script"
+            aria-label="Experiment script"
+              >
+                <Label>Experiment Script</Label>
+                <Button
+                  variant="default"
+                  trailingVisual={<SelectChevronUpDownIcon />}
+                >
+                  <SelectValue />
+                </Button>
+                <Popover>
+                  <ListBox>
+                    {scriptOptions.map((option) => (
+                      <SelectItem
+                        key={option.key}
+                        id={option.key}
+                        textValue={option.label}
+                      >
+                        <Flex direction="column" gap="size-50">
+                          <Text weight="semibold">{option.label}</Text>
+                          <Text color="text-700">{option.description}</Text>
+                        </Flex>
+                      </SelectItem>
+                    ))}
+                  </ListBox>
+                </Popover>
+              </Select>
+              <TextField value={experimentName} onChange={setExperimentName}>
+                <Label>Experiment Name (optional)</Label>
+                <Input placeholder="e.g. improved-retrieval-v2" />
+              </TextField>
+            </>
           )}
-        </View>
-      </DialogContent>
-    </Dialog>
+          <Flex direction="row" justifyContent="end" gap="size-100">
+            <Button
+              variant="default"
+              onPress={() => {
+                close();
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              isDisabled={
+                isSubmitting ||
+                isLoadingScripts ||
+                !selectedScript ||
+                scripts.length === 0
+              }
+              onPress={onSubmit}
+            >
+              {isSubmitting ? "Starting..." : "Run"}
+            </Button>
+          </Flex>
+        </Flex>
+      </View>
+    </DialogContent>
   );
 }
 
@@ -253,7 +283,9 @@ export function RunExperimentButton({
       </Button>
       <ModalOverlay isDismissable>
         <Modal variant="slideover" size="L">
-          <RunExperimentExampleSwitcher />
+          <Dialog>
+            {({ close }) => <RunExperimentDialog close={close} />}
+          </Dialog>
         </Modal>
       </ModalOverlay>
     </DialogTrigger>

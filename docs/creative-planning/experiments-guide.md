@@ -107,6 +107,8 @@ export PHOENIX_BASE_URL="http://localhost:6006"
 export EVAL_MODEL="gpt-4o"
 ```
 
+Every Dify API key is scoped to a specific workflow. The experiment task runner simply calls whatever workflow the current `DIFY_API_KEY` grants access to. To target a different workflow, generate or copy the key for that workflow in Dify and update the `DIFY_API_KEY` value before you launch the experiment.
+
 **Pro tip:** Add these to your `~/.bashrc` or `~/.zshrc` so they persist.
 
 ### Step 3: Create or Upload Your Dataset
@@ -191,7 +193,19 @@ You should see your dataset listed, e.g.:
 
 ### Step 5: Run Your First Experiment
 
-#### Option A: Quick Dry Run (Recommended First)
+#### Option A: Launch from Phoenix UI (Run Experiment)
+
+1. Open Phoenix (`http://localhost:6006`) and navigate to **Datasets** → select your dataset.
+2. Click the **Run Experiment** button in the page header.
+3. In the slide-over, choose the experiment script (we ship `run_dify_experiment` by default).
+4. Optionally set an experiment name so it is easier to compare runs later.
+5. Hit **Run**. You'll see a toast with the job ID and a **View Log** shortcut that streams the Python runner output.
+
+The UI triggers the same backend command as the CLI options below. It uses the Dify workflow associated with your current `DIFY_API_KEY`, so update that variable (and restart Phoenix if it's already running) before running against a different workflow.
+
+> **Tip:** You can reopen the log any time at `/v1/experiment-jobs/<jobId>/log` or check status via `/v1/experiment-jobs/<jobId>`.
+
+#### Option B: Quick Dry Run (CLI)
 
 Test with just 3 examples to make sure everything works:
 
@@ -202,18 +216,18 @@ cd /home/acb/WSL2-Client-Work/InTheBox/phoenix
 ```
 
 This will:
-- Run 3 prompts from your dataset through DIFY
+- Run 3 prompts from your dataset through Dify
 - Execute all evaluators
 - Show detailed logs
 - **Not** log to Phoenix (dry run mode)
 
-#### Option B: Use the Shell Wrapper
+#### Option C: Use the Shell Wrapper
 
 ```bash
 ./scripts/experiments/run_experiment.sh "baseline-v1"
 ```
 
-#### Option C: Use Python Script Directly
+#### Option D: Use Python Script Directly
 
 ```bash
 python scripts/experiments/run_dify_experiment.py \
@@ -303,7 +317,17 @@ Experiments ask Dify to re-run the workflow, so you need valid API credentials a
 - `EVAL_MODEL` — judge model (default `gpt-4o`, overridable per run).
 - Phoenix must be reachable (`PHOENIX_BASE_URL` defaults to `http://localhost:6006` outside Docker and `http://phoenix:6006` inside).
 
-### 4.2 Local CLI Wrapper (`run_experiment.sh`)
+### 4.2 Phoenix UI "Run Experiment" Panel
+
+- Open a dataset in Phoenix and click the **Run Experiment** button in the header.
+- The slide-over shows every backend-allowed script returned by `/v1/experiment-scripts`. By default you'll see `run_dify_experiment`, which calls `scripts/experiments/run_dify_experiment.py`.
+- Optionally set a friendly experiment name; otherwise Phoenix will generate one.
+- Hit **Run** to queue the job. A toast confirms the job ID and links to the streaming log (`/v1/experiment-jobs/<jobId>/log`).
+- Jobs run on the Phoenix server process, so keep that terminal open if you're developing locally. Results land in the dataset's **Experiments** tab when complete.
+
+Remember that the Python runner uses the Dify workflow tied to `DIFY_API_KEY`. Swap the key (and restart the Phoenix server if the variable lives in its environment) when you need to exercise a different workflow.
+
+### 4.3 Local CLI Wrapper (`run_experiment.sh`)
 
 ```bash
 # Smoke test with three rows
@@ -321,7 +345,7 @@ Experiments ask Dify to re-run the workflow, so you need valid API credentials a
 
 The script validates `DIFY_API_KEY`, warns if `OPENAI_API_KEY` is missing, and then invokes `run_dify_experiment.py` with the right flags. Use `--dry-run N` to limit the row count, `--verbose` for debug logs, `--explain` for evaluator rationales.
 
-### 4.3 Docker Sidecar (`run_experiment_docker.sh`)
+### 4.4 Docker Sidecar (`run_experiment_docker.sh`)
 
 When Phoenix runs via Docker Compose, trigger experiments with the helper script (see `experiments-docker.md` for full details):
 
@@ -340,7 +364,7 @@ The wrapper will:
 
 Inside Docker we map `host.docker.internal` so the sidecar can contact a host‑running Dify instance. Adjust `DIFY_BASE_URL` accordingly.
 
-### 4.4 Reading the Output
+### 4.5 Reading the Output
 
 `run_dify_experiment.py` logs:
 - Which dataset was used and how many examples were loaded.
